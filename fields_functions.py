@@ -182,6 +182,11 @@ prep_config = {'prep_file_dir': 'C:/Users/jesse/Documents/grad school/masters re
               'prep_cloud_mask_thresh': 70,     # this specifies what cloud probability value to use for binarizing the cloud mask
               'prep_clip_percentile': 2}        # this specifies what percentage of values on either end of the histogram to clip for each band
 
+
+### Code Reorganizing Notes:
+- The code currently only works with Sentinel-2 Level 2A data (bottom of atmosphere) and hits an error parsing the metadata
+  when trying to read Level 1C (top of atmosphere) data.
+
 """
 
 def xr_get_zip_info_to_dict(zip_file):
