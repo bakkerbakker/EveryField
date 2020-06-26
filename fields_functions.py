@@ -786,21 +786,30 @@ def sobel_edges(input_array):
     return sobel(input_array)
 
 
-### Prior version of the edges algorithm implementation did not provide accurate outputs, emphasizing noise in the time stack
+### FIX ME: this can be made more generalizable for assigning what bands get included in the edge magnitude calculation
+### Currently, the R G B NIR bands each get passed to the edge algorithm, but it could be useful to
+### also pass a derived NDVI band to the edge algorithm as well, or to only use a subset of the bands.
+### This also can take a different edge algorithm as an input, instead of just the sobel filter.
 def compute_edges(ds_time_stack, edge_algo = sobel_edges, chunk_size='auto', percentile=0.1):
     for i in np.arange(0,len(ds_time_stack.coords['time']),1):
-        edges = xr.ufuncs.fabs(ds_time_stack.isel(time=i).fillna(0).map(edge_algo)).chunk({'x':chunk_size,'y':chunk_size})
+#         print('edges time step:', i)   # This is for testing
+        ### Map the edge algorithm to the individual time step in the for loop
+        edges = ds_time_stack.isel(time=i).fillna(0).map(edge_algo).chunk({'x':chunk_size,'y':chunk_size})
+        ### Then take the sum of the edge magnitude from each band, and take the cumulative sum of all the time steps
         if i == 0:
             edges_sum = (edges['red']+edges['green']+edges['blue']+edges['nir'])
         if i > 0:
             edges_sum = edges_sum + (edges['red']+edges['green']+edges['blue']+edges['nir'])
         
-#    edges_sum = normalize_ufunc(clip_nan_ufunc(edges_sum/(4*len(ds_time_stack.coords['time'])), percentile))
+    ### Then take the average edge magnitude across the full time stack
     edges_sum = edges_sum/(4*len(ds_time_stack.coords['time']))
+    ### Clip outlier values based on the percentile input to remove noisy pixels with high edge values
     edges_sum = clip_nan_ufunc(edges_sum, percentile)
+    ### Normalize the average edge magnitude layer to a range of 0 to 1
     edges_sum = normalize_ufunc(edges_sum)
 
     return edges_sum
+
 
 """
 These functions are from the original thresholding approach
@@ -910,36 +919,35 @@ def mask_processing(input_ds, ndwi_thresh = 0.5, ndvi_max_thresh = 0.3, ndvi_ran
     ndwi_mask = ndwi_mask_func(input_ds, ndwi_thresh = ndwi_thresh)
     
     ### NDVI Masking
-    # Compute monthly mean composites
-    monthly_avg = input_ds.resample(time='1MS').mean(skipna = True)
-    # Compute NDVI on the monthly composite iamges
-    monthly_avg_ndvi = ndvi_xr_norm(monthly_avg)
+    # Compute mean NDVI on the monthly composite images as input to the NDVI masking function
     # Compute NDVI mask: Max monthly mean NDVI > max_thresh, and Max Monthly NDVI - May monthly mean NDVI 
-    combined_ndvi_mask = mask_ndvi_max_and_range(monthly_avg_ndvi, 
+    combined_ndvi_mask = mask_ndvi_max_and_range(ndvi_xr_norm(input_ds.resample(time='1MS').mean(skipna = True)), 
                                                  max_thresh = ndvi_max_thresh, 
                                                  range_thresh = ndvi_range_thresh)
     
     ### Edges
     # Mean edges for full data stack
-    edges_mean = normalize_ufunc(clip_nan_ufunc(edges_to_xr_data_array(input_ds).mean(dim='time', skipna = True), 2))
+    edges_mean = compute_edges(input_ds)
     # Mask edges
     edges_mask = xr.where(edges_mean > edges_thresh, 1, 0)
     
     
-    ### Combined mask
+    ### Combined mask is a combination of the component masks via a logical OR function
+    ### If a pixel is masked out in any of the component masks it is masked out in the combined mask layer
     combined_mask = xr.ufuncs.logical_or(xr.ufuncs.logical_or(ndwi_mask, combined_ndvi_mask), edges_mask)
     # Invert mask
-    mask_invert = xr.where(combined_mask == 1, 0, 1)
+    combined_mask = xr.where(combined_mask == 1, 0, 1)
     
     ### Fill holes in the mask so that there aren't stray pixels
-    mask_holes_filled = mask_invert.data.map_overlap(fill_holes, depth=1)
+    combined_mask = combined_mask.data.map_overlap(fill_holes, depth=1)
     
     ### Set minimum filter to enforce minimum height/width of background. 
     ### This eliminates small isolated areas and expands road areas.
-    mask_minimum_filt = mask_holes_filled.map_overlap(min_filter, depth = 1)
+    ### This can be replaced with some of the morphological filters used in the cluster mask clean up process
+    combined_mask = combined_mask.map_overlap(min_filter, depth = 1)
     
     ### Set mask to ds_time_stack array
-    input_ds['mask'] = xr.DataArray(mask_minimum_filt, 
+    input_ds['mask'] = xr.DataArray(combined_mask, 
                                      dims=('y','x'),
                                      coords = [input_ds['red'].coords['y'],
                                                input_ds['red'].coords['x']])
