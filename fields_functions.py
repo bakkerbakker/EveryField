@@ -369,9 +369,9 @@ def prep_data():
     
     # set working directory to the folder with the sentinel data tiles
     # Set file_dir in the global variables at top of the code
-#    os.chdir(file_dir)
+    os.chdir(file_dir)
     glob_str = "*" + tile_id + "*.zip"
-    zip_list = glob.glob(file_dir + glob_str)
+    zip_list = glob.glob(glob_str)
     
     # build dictionary of metadata from gdal_info calls for each tile in the list of zip_files
     tile_info_dict = {}
